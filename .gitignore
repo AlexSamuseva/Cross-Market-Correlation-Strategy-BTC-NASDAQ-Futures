@@ -1,0 +1,21 @@
+# Ignore the datasets folder (any casing)
+Datasets/
+datasets/
+data/
+
+# --- Python Environment & Cache ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+
+# --- Jupyter Notebooks ---
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
