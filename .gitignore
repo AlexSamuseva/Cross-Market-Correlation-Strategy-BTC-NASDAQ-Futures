@@ -2,6 +2,7 @@
 Datasets/
 datasets/
 data/
+*.csv
 
 # --- Python Environment & Cache ---
 __pycache__/
