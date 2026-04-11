@@ -1,8 +1,8 @@
 # Ignore the datasets folder (any casing)
 Datasets/
 datasets/
-data/
-*.csv
+# data/
+# *.csv
 
 # --- Python Environment & Cache ---
 __pycache__/
