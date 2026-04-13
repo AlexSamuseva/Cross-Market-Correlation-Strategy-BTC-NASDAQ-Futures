@@ -1,106 +1,82 @@
-# src/data_pipeline.py
-import sys
-import os
+from pathlib import Path
 
-# 1. FORCE PYTHON TO FIND THE 'src' FOLDER
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
-
-# 2. NOW WE CAN SAFELY IMPORT
 import pandas as pd
-import numpy as np
-from src.config import FILE_NQ, FILE_BTC
 
-def load_csv(path, suffix):
-    """
-    Loads a CSV, standardizes column names, and aligns the datetime 
-    index to Warsaw time (CET/CEST) regardless of the data source.
-    """
-    df = pd.read_csv(path, sep=None, engine='python')
-    df.columns = [c.strip().lower() for c in df.columns]
+from src.config import BTC_DATA_FILE, NQ_DATA_FILE
 
-    if 'open time' in df.columns:
-        df = df.rename(columns={'open time': 'time'})
-        tz_source = 'UTC'  
-    elif 'date' in df.columns:
-        df = df.rename(columns={'date': 'time'})
-        tz_source = 'America/Chicago' 
+
+def _standardize_market_data(path: str | Path, suffix: str) -> pd.DataFrame:
+    """Load a market CSV and normalize schema to a shared UTC index."""
+    df = pd.read_csv(path)
+    df.columns = [column.strip().lower() for column in df.columns]
+
+    if "open time" in df.columns:
+        df["datetime"] = pd.to_datetime(df["open time"], utc=True)
+    elif "date" in df.columns:
+        df["datetime"] = (
+            pd.to_datetime(df["date"], format="%Y%m%d %H:%M:%S")
+            .dt.tz_localize(
+                "America/Chicago",
+                ambiguous="NaT",
+                nonexistent="shift_forward",
+            )
+            .dt.tz_convert("UTC")
+        )
     else:
-        raise ValueError(f"No valid time column found for {suffix}. Check CSV headers.")
+        raise ValueError(f"Unsupported schema for {path}.")
 
-    if 'close time' in df.columns:
-        df = df.drop(columns=['close time'])
+    rename_map = {
+        "open": f"{suffix}_open",
+        "high": f"{suffix}_high",
+        "low": f"{suffix}_low",
+        "close": f"{suffix}_close",
+        "volume": f"{suffix}_volume",
+    }
+    keep_columns = ["datetime", *rename_map.keys()]
+    df = df[keep_columns].rename(columns=rename_map)
+    df = df.dropna(subset=["datetime"]).set_index("datetime").sort_index()
+    df.index.name = "datetime"
 
-    rename_dict = {c: f'{c}_{suffix}' for c in ['open', 'high', 'low', 'close'] if c in df.columns}
-    df = df.rename(columns=rename_dict)
+    numeric_columns = [column for column in df.columns if column.endswith(("open", "high", "low", "close", "volume"))]
+    for column in numeric_columns:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
 
-    df['datetime'] = pd.to_datetime(df['time'])
-    df['datetime'] = df['datetime'].dt.tz_localize(tz_source, ambiguous='NaT', nonexistent='NaT')
-    df['datetime'] = df['datetime'].dt.tz_convert('Europe/Warsaw')
-    df['datetime'] = df['datetime'].dt.tz_localize(None)
-
-    keep = ['datetime', f'open_{suffix}', f'high_{suffix}', f'low_{suffix}', f'close_{suffix}']
-    df = df.dropna(subset=['datetime']) 
-    df = df[keep].set_index('datetime').sort_index()
-
-    for c in df.columns:
-        df[c] = pd.to_numeric(df[c], errors='coerce')
-        
     return df
 
-def get_aligned_raw_data(how='inner'):
-    """Loads both datasets and joins them."""
-    print("Loading NQ data...")
-    df_nq  = load_csv(FILE_NQ,  'nq')
-    print("Loading BTC data...")
-    df_btc = load_csv(FILE_BTC, 'btc')
 
-    print(f"Merging data with '{how}' join...")
-    df = df_btc.join(df_nq, how=how)
-    
-    df['ret_btc']   = df['close_btc'].pct_change()
-    df['ret_nq']    = df['close_nq'].pct_change()
-    df['hour']      = df.index.hour
-    df['minute']    = df.index.minute
-    df['date']      = df.index.date
-    df['dayofweek'] = df.index.dayofweek
-    
-    return df
+def load_market_data(
+    btc_path: str | Path = BTC_DATA_FILE,
+    nq_path: str | Path = NQ_DATA_FILE,
+    how: str = "inner",
+) -> pd.DataFrame:
+    """Load BTC and NQ minute data, align on UTC timestamps, and add returns."""
+    btc = _standardize_market_data(btc_path, "btc")
+    nq = _standardize_market_data(nq_path, "nq")
 
-def apply_strategy_features(df):
-    """Prepares raw, numeric features for the simulation engine."""
-    df = df.copy()
-    
-    df = df[df['dayofweek'] < 5]          
-    df.dropna(subset=['close_nq', 'close_btc'], inplace=True)
+    df = nq.join(btc, how=how)
+    df["btc_ret"] = df["btc_close"].pct_change()
+    df["nq_ret"] = df["nq_close"].pct_change()
+    return df.dropna(subset=["btc_ret", "nq_ret"]).copy()
 
-    prev_close_nq  = df['close_nq'].shift(1)
-    df['gap_pct']  = (df['open_nq'] - prev_close_nq).abs() / prev_close_nq
 
-    time_gap_min = df.index.to_series().diff().dt.total_seconds().div(60).fillna(0).values
-    df['is_session_open'] = time_gap_min > 60
+def convert_index_timezone(df: pd.DataFrame, timezone: str) -> pd.DataFrame:
+    """Return a copy with its DatetimeIndex converted to a target timezone."""
+    converted = df.copy()
+    converted.index = converted.index.tz_convert(timezone)
+    return converted
 
-    df.dropna(inplace=True)
-    return df
 
-def get_train_test_split(df, split_ratio=0.70):
-    """Splits the data chronologically."""
-    split_i   = int(len(df) * split_ratio)
-    train_df  = df.iloc[:split_i].copy()
-    test_df   = df.iloc[split_i:].copy()
-    
-    return train_df, test_df
+def add_calendar_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Attach commonly used time breakdown columns without changing the index."""
+    enriched = df.copy()
+    enriched["hour"] = enriched.index.hour
+    enriched["minute"] = enriched.index.minute
+    enriched["date"] = enriched.index.date
+    enriched["dayofweek"] = enriched.index.dayofweek
+    return enriched
 
-# ==========================================
-# THIS ALLOWS YOU TO RUN THE FILE DIRECTLY
-# ==========================================
-if __name__ == "__main__":
-    print("--- Testing Data Pipeline ---")
-    raw_df = get_aligned_raw_data(how='inner')
-    final_df = apply_strategy_features(raw_df)
-    
-    print("\nPipeline execution successful!")
-    print(f"Total rows prepared: {len(final_df)}")
-    print("\nFirst 5 rows:")
-    print(final_df.head())
+
+def get_train_test_split(df: pd.DataFrame, split_ratio: float = 0.70) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split a dataframe chronologically."""
+    split_index = int(len(df) * split_ratio)
+    return df.iloc[:split_index].copy(), df.iloc[split_index:].copy()
