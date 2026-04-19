@@ -2,8 +2,6 @@
 
 Research repository for studying whether short-horizon alignment between Bitcoin and Nasdaq futures can be turned into a tradable regime filter.
 
-The project currently centers on [`research/correlation_research.ipynb`](research/correlation_research.ipynb), with reusable logic extracted into [`src`](src) so the notebook can stay focused on analysis, interpretation, and visualization.
-
 ## What This Repo Does
 
 - Loads and synchronizes 1-minute BTCUSDT and NQ futures data.
@@ -38,17 +36,6 @@ BTC data is treated as UTC-native. NQ data is parsed as `America/Chicago` exchan
 2. Run the setup cells, which import reusable functions from `src`.
 3. Use the notebook for statistical tests, plots, and interpretation.
 4. Extend `src` when a block becomes reusable or is needed outside the notebook.
-
-## Environment
-
-Recommended Python packages used by the notebook and extracted modules:
-
-- `pandas`
-- `numpy`
-- `plotly`
-- `scipy`
-- `statsmodels`
-- `jupyter`
 
 ## Current State
 
