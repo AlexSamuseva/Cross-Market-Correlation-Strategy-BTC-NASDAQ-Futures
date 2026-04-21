@@ -4,6 +4,58 @@ import pandas as pd
 from src.indicators import fast_rolling_spearman
 
 
+def compute_unified_robustness_score(
+    oos_win_rate: float,
+    oos_avg_bps: float,
+    is_win_rate: float,
+    is_avg_bps: float,
+    total_events: int,
+    weight_win_rate: float = 1.0,
+    weight_bps: float = 0.35,
+) -> float:
+    """
+    Unified robustness score that rewards OOS outperformance while penalizing overfitting.
+    
+    Uses asymmetric gap penalties:
+    - Only penalizes when IS > OOS (overfitting)
+    - Lightly rewards when OOS > IS (positive surprise)
+    - Maintains preference for high-quality signals
+    
+    Args:
+        oos_win_rate: Out-of-sample win rate (%)
+        oos_avg_bps: Out-of-sample avg returns (basis points)
+        is_win_rate: In-sample win rate (%)
+        is_avg_bps: In-sample avg returns (basis points)
+        total_events: Total number of events/signals
+        weight_win_rate: Primary weight on OOS win rate (default 1.0)
+        weight_bps: Secondary weight on OOS returns (default 0.35)
+    
+    Returns:
+        Unified robustness score (higher is better)
+    """
+    if np.isnan([oos_win_rate, is_win_rate, oos_avg_bps, is_avg_bps]).any() or total_events < 1:
+        return np.nan
+    
+    # Asymmetric gap penalties: only penalize overfitting, reward surprises
+    win_rate_degradation = max(0, is_win_rate - oos_win_rate)  # Penalize if IS > OOS
+    win_rate_surprise = max(0, oos_win_rate - is_win_rate) * 0.15  # Light reward if OOS > IS
+    
+    bps_degradation = max(0, is_avg_bps - oos_avg_bps)  # Penalize if IS > OOS
+    bps_surprise = max(0, oos_avg_bps - is_avg_bps) * 0.08  # Light reward if OOS > IS
+    
+    score = (
+        weight_win_rate * oos_win_rate           # Primary: OOS win rate quality
+        + weight_bps * oos_avg_bps               # Secondary: OOS returns
+        - 0.60 * win_rate_degradation           # Heavy penalty for win rate overfitting
+        - 0.08 * bps_degradation                # Light penalty for return degradation
+        + win_rate_surprise                      # Light reward for OOS surprise
+        + bps_surprise                           # Light reward for OOS return surprise
+        + 2.0 * np.log1p(total_events)          # Bonus for larger event sample
+    )
+    
+    return score
+
+
 def _prepare_window_frame(
     df: pd.DataFrame,
     window: int,
@@ -174,14 +226,19 @@ def run_robustness_grid_search(
                     is_median_bps = train_directional.median() * 10000 if train_count else np.nan
                     oos_median_bps = test_directional.median() * 10000 if test_count else np.nan
 
-                    win_rate_gap = abs(is_win_rate - oos_win_rate) if enough_events else np.nan
-                    bps_gap = abs(is_avg_bps - oos_avg_bps) if enough_events else np.nan
-                    robust_score = (
-                        oos_win_rate
-                        + 0.35 * oos_avg_bps
-                        - 0.60 * win_rate_gap
-                        - 0.08 * bps_gap
-                        + 2.0 * np.log1p(total_count)
+                    # Calculate directional gaps (asymmetric: reward OOS surprises)
+                    win_rate_gap = is_win_rate - oos_win_rate if enough_events else np.nan
+                    bps_gap = is_avg_bps - oos_avg_bps if enough_events else np.nan
+                    
+                    # Use unified robustness score
+                    robust_score = compute_unified_robustness_score(
+                        oos_win_rate=oos_win_rate,
+                        oos_avg_bps=oos_avg_bps,
+                        is_win_rate=is_win_rate,
+                        is_avg_bps=is_avg_bps,
+                        total_events=total_count,
+                        weight_win_rate=1.0,
+                        weight_bps=0.35,
                     ) if enough_events else np.nan
 
                     rows.append(
@@ -361,15 +418,20 @@ def run_walk_forward_grid_search(
                         (config_folds["train_avg_bps"] - config_folds["oos_avg_bps"]).abs().mean()
                     )
                     passes_walk_forward = valid_folds >= min_valid_folds
-                    walk_forward_score = (
-                        weighted_oos_win_rate
-                        + 0.45 * weighted_oos_avg_bps
-                        + 0.12 * positive_month_pct
-                        + 0.05 * fold_coverage_pct
-                        - 0.55 * mean_win_rate_gap
-                        - 0.18 * oos_bps_std
-                        - 0.06 * mean_bps_gap
-                        + 1.75 * np.log1p(total_test_events)
+                    
+                    # Calculate mean training metrics for walk-forward unified score
+                    mean_train_win_rate = config_folds["train_win_rate_pct"].mean()
+                    mean_train_bps = config_folds["train_avg_bps"].mean()
+                    
+                    # Use unified robustness score adapted for walk-forward (averaged across folds)
+                    walk_forward_score = compute_unified_robustness_score(
+                        oos_win_rate=weighted_oos_win_rate,
+                        oos_avg_bps=weighted_oos_avg_bps,
+                        is_win_rate=mean_train_win_rate,
+                        is_avg_bps=mean_train_bps,
+                        total_events=total_test_events,
+                        weight_win_rate=1.0,
+                        weight_bps=0.45,  # Slightly higher emphasis on returns for walk-forward
                     ) if passes_walk_forward else np.nan
 
                     summary_rows.append(
