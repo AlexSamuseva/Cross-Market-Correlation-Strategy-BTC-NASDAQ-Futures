@@ -13,8 +13,9 @@ DEFAULT_HOLD_HORIZONS = np.arange(0, 65, 5)
 DEFAULT_SENSITIVITY_WINDOWS = np.arange(0, 65, 5)
 DEFAULT_SENSITIVITY_HORIZONS = np.arange(0, 65, 5)
 
-SIGNAL_SESSION_START = "09:30"
-SIGNAL_SESSION_END = "16:00"
+# Test all times (24-hour coverage; CME maintenance gap already handled via inner-join data sync)
+SIGNAL_SESSION_START = "00:00"
+SIGNAL_SESSION_END = "23:59"
 SIGNAL_TIMEZONE = "America/New_York"
 DEFAULT_HIT_RATIO_THRESHOLD = 0.70
 DEFAULT_SPEARMAN_THRESHOLD = 0.60
