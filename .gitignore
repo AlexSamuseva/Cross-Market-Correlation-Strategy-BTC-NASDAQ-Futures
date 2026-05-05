@@ -1,7 +1,25 @@
-datasets/
+# --- Data & Datasets ---
+# Ignore data folders regardless of case
+[Dd]atasets/
+
+# Ignore data folder and all CSV files
+data/
+*.csv
+
+# --- Python Environment & Cache ---
 __pycache__/
-*.pyc
-.ipynb_checkpoints/
-.DS_Store
-.env
+*.py[cod]
+*$py.class
+
+# Virtual environments and environment variables
+.venv/
 venv/
+env/
+.env
+
+# --- Jupyter Notebooks ---
+.ipynb_checkpoints/
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
